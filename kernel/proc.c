@@ -137,6 +137,8 @@ found:
   p->syscall_counter = 0; 
   p->tickets = 10000;
   p->ticks = 0;
+  p->stride = 10000 / p->tickets; //set initial stride for scheduler
+  p->pass = p->stride; // initial pass value equals stride
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -470,6 +472,7 @@ scheduler(void)
     intr_on();
 
     #if defined(LOTTERY)
+      //printf("Lottery scheduler active\n");
       // Lottery Scheduler
       int total_tickets = 0;
       for (p = proc; p < &proc[NPROC]; p++) {
@@ -510,9 +513,50 @@ scheduler(void)
             release(&p->lock);
           }
         }
+      }  
+    
+    #elif defined(STRIDE)
+      //Stride Scheduler
+      //printf("Stride scheduler active\n");
+      struct proc *minproc = 0;
+      int minpass = __INT_MAX__; 
+      // Find the process having the minimum pass value
+      for (p = proc; p < &proc[NPROC]; p++) {
+        acquire(&p->lock);
+        if (p->state == RUNNABLE && p->pass < minpass)
+        {
+          if (minproc) {
+            release(&minproc->lock);
+          }
+          minproc = p;
+          minpass = p->pass;
+
+        }
+        else{
+          release(&p->lock);
+        }
       }
+
+
+      if (minproc) {
+      // Run the selected process now
+      minproc->state = RUNNING;
+      c->proc = minproc;
+      minproc->ticks++;
+      swtch(&c->context, &minproc->context);
+
+      c->proc = 0; // Process finished running for now
+
+      minproc->pass += minproc->stride; // Update the pass value after running, pass+=stride
+      release(&minproc->lock);
+      }
+      else {
+        ; // No process to run, yield lock
+      }
+
     #else
       // Original xv6 Round Robin Scheduler
+      //printf("Default scheduler active\n");
       for(p = proc; p < &proc[NPROC]; p++) {
         acquire(&p->lock);
         if(p->state == RUNNABLE) {
